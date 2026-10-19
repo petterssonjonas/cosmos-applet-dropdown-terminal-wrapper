@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=Cosmos Dropdown Terminal (Kitty)
+Comment=Show or hide a persistent Kitty dropdown on the COSMIC desktop
+Type=Application
+Icon=utilities-terminal
+Exec=cosmos-applet-dropdown-terminal-wrapper
+Terminal=false
+StartupNotify=false
+Categories=COSMIC;System;TerminalEmulator;
+Keywords=Terminal;Dropdown;Console;Kitty;
+NoDisplay=true
+X-CosmicApplet=true
+X-HostWaylandDisplay=true
+X-CosmicHoverPopup=Auto

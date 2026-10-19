@@ -1,0 +1,10 @@
+[package]
+name = "cosmos-applet-dropdown-terminal-wrapper"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "Cosmos panel launcher for a persistent native Kitty dropdown on COSMIC"
+
+[dependencies]
+libcosmic = { git = "https://github.com/pop-os/libcosmic.git", default-features = false, features = ["applet", "applet-token", "dbus-config", "multi-window", "tokio", "wayland", "winit", "wgpu", "surface-message"] }
+tokio = { version = "1", features = ["process", "time"] }

@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Toggle a persistent native Kitty layer-shell panel without changing settings."""
+
+import argparse
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+
+def select_output(outputs, requested=None):
+    enabled = [output for output in outputs if output.get("enabled")]
+    if requested:
+        enabled = [output for output in enabled if output.get("name") == requested]
+    if not enabled:
+        raise ValueError("No enabled output matches the requested display")
+    return min(enabled, key=lambda item: (
+        item.get("position", {}).get("x", 0),
+        item.get("position", {}).get("y", 0), item["name"],
+    ))
+
+
+def panel_height(output):
+    mode = next((mode for mode in output["modes"] if mode.get("current")), None)
+    if mode is None:
+        raise ValueError(f"No current mode reported for {output['name']}")
+    scale = float(output["scale"])
+    if not math.isfinite(scale) or scale <= 0:
+        raise ValueError("Output scale must be finite and positive")
+    rotated = output.get("transform") in ("90", "270", "flipped-90", "flipped-270")
+    physical_height = int(mode["width"] if rotated else mode["height"])
+    if physical_height <= 0:
+        raise ValueError("Output height must be positive")
+    height = max(2, math.floor(physical_height / scale * 0.4 + 0.5))
+    # Kitty's native layer sizing adds one pixel around the requested content.
+    return height - 1
+
+
+def configuration_path():
+    root = Path(__file__).resolve().parent.parent
+    installed = root / "share/cosmos-applet-dropdown-terminal-wrapper/kitty.conf"
+    return installed if installed.is_file() else root / "resources/kitty.conf"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", default=os.environ.get("COSMOS_DROPDOWN_OUTPUT"),
+                        help="Wayland output name; defaults to the leftmost enabled output")
+    parser.add_argument("--list-outputs", action="store_true", help="List outputs without changing them")
+    args = parser.parse_args()
+    # COSMIC applets receive a private panel socket; subprocesses must reconnect
+    # using WAYLAND_DISPLAY rather than inheriting that restricted connection.
+    os.environ.pop("WAYLAND_SOCKET", None)
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        parser.error("Run this command inside a Wayland session")
+    for dependency in ("kitten", "wlr-randr"):
+        if shutil.which(dependency) is None:
+            parser.error(f"Required executable not found: {dependency}")
+    result = subprocess.run(["wlr-randr", "--json"], check=True, capture_output=True, text=True, timeout=5)
+    outputs = json.loads(result.stdout)
+    if args.list_outputs:
+        print(json.dumps(outputs, indent=2))
+        return
+    output = select_output(outputs, args.output)
+    config = configuration_path()
+    if not config.is_file():
+        raise ValueError(f"Wrapper configuration is missing: {config}")
+    runtime = Path(os.environ["XDG_RUNTIME_DIR"])
+    log_dir = runtime / "cosmos-applet-dropdown-terminal-wrapper"
+    log_dir.mkdir(mode=0o700, exist_ok=True)
+    if log_dir.is_symlink() or log_dir.stat().st_uid != os.getuid():
+        raise ValueError("Wrapper runtime directory must belong to the current user")
+    os.chmod(log_dir, 0o700)
+    identity = "\0".join((os.environ["WAYLAND_DISPLAY"], output["name"]))
+    group = "cosmos-dropdown-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
+    command = [
+        "kitten", "panel", "--single-instance", "--toggle-visibility", "--detach",
+        f"--instance-group={group}", "--app-id=dev.jp.CosmosDropdownTerminalWrapper",
+        "--edge=top", "--layer=overlay", "--focus-policy=on-demand",
+        "--override-exclusive-zone", "--exclusive-zone=0", "--hide-on-focus-loss=no",
+        f"--output-name={output['name']}", f"--lines={panel_height(output)}px",
+        f"--config={config}", f"--detached-log={log_dir / (group + '.log')}",
+    ]
+    subprocess.run(command, check=True, timeout=10)
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    try:
+        main()
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        print(f"cosmos-applet-dropdown-terminal-wrapper-toggle: {error}", file=sys.stderr)
+        if isinstance(error, subprocess.CalledProcessError) and error.stderr:
+            print(error.stderr.strip(), file=sys.stderr)
+        sys.exit(1)

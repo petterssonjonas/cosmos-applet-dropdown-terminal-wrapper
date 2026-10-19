@@ -1,0 +1,4 @@
+/target/
+/shortcut/target/
+__pycache__/
+*.pyc
